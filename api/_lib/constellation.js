@@ -1,5 +1,4 @@
 import axios from "axios";
-import { createClient as createKvClient } from "@vercel/kv";
 
 const BASE_URL = "https://a.windbornesystems.com/treasure/";
 const CACHE_KEY = "constellation_data_v1";
@@ -44,44 +43,8 @@ export async function fetchAndProcessData() {
   return { balloons: balloonData };
 }
 
-// --- Cache client selection: KV -> Upstash REST -> Generic Redis URL ---
+// --- Cache client selection: Generic Redis URL only ---
 async function getCacheAdapter() {
-  // Prefer Vercel KV if configured
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    const kv = createKvClient({
-      url: process.env.KV_REST_API_URL,
-      token: process.env.KV_REST_API_TOKEN,
-    });
-    return {
-      name: "kv",
-      async get(key) {
-        return kv.get(key);
-      },
-      async set(key, value, ttlSeconds) {
-        return kv.set(key, value, { ex: ttlSeconds });
-      },
-    };
-  }
-
-  // Upstash REST
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
-    return {
-      name: "upstash",
-      async get(key) {
-        const raw = await redis.get(key);
-        return typeof raw === "string" ? JSON.parse(raw) : raw;
-      },
-      async set(key, value, ttlSeconds) {
-        return redis.set(key, JSON.stringify(value), { ex: ttlSeconds });
-      },
-    };
-  }
-
   // Generic REDIS_URL (e.g., Redis Cloud/Marketplace)
   if (process.env.REDIS_URL) {
     // Reuse connection across invocations
@@ -97,7 +60,7 @@ async function getCacheAdapter() {
     }
     const redis = globalThis[globalKey];
     return {
-      name: "redis-url",
+      name: "redis",
       async get(key) {
         const raw = await redis.get(key);
         return raw ? JSON.parse(raw) : null;
