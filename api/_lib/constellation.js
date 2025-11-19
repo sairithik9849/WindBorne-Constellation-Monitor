@@ -1,12 +1,5 @@
 import axios from "axios";
-import { createClient } from "@vercel/kv";
-
-// Environment variable names per Vercel KV convention
-// KV_REST_API_URL, KV_REST_API_TOKEN
-const kv = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+import { createClient as createKvClient } from "@vercel/kv";
 
 const BASE_URL = "https://a.windbornesystems.com/treasure/";
 const CACHE_KEY = "constellation_data_v1";
@@ -51,24 +44,99 @@ export async function fetchAndProcessData() {
   return { balloons: balloonData };
 }
 
+// --- Cache client selection: KV -> Upstash REST -> Generic Redis URL ---
+async function getCacheAdapter() {
+  // Prefer Vercel KV if configured
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    const kv = createKvClient({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    });
+    return {
+      name: "kv",
+      async get(key) {
+        return kv.get(key);
+      },
+      async set(key, value, ttlSeconds) {
+        return kv.set(key, value, { ex: ttlSeconds });
+      },
+    };
+  }
+
+  // Upstash REST
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    return {
+      name: "upstash",
+      async get(key) {
+        const raw = await redis.get(key);
+        return typeof raw === "string" ? JSON.parse(raw) : raw;
+      },
+      async set(key, value, ttlSeconds) {
+        return redis.set(key, JSON.stringify(value), { ex: ttlSeconds });
+      },
+    };
+  }
+
+  // Generic REDIS_URL (e.g., Redis Cloud/Marketplace)
+  if (process.env.REDIS_URL) {
+    // Reuse connection across invocations
+    const globalKey = "__redis_io__";
+    if (!globalThis[globalKey]) {
+      const IORedis = (await import("ioredis")).default;
+      globalThis[globalKey] = new IORedis(process.env.REDIS_URL, {
+        lazyConnect: false,
+        maxRetriesPerRequest: 2,
+        enableAutoPipelining: true,
+        tls: process.env.REDIS_URL.startsWith("rediss://") ? {} : undefined,
+      });
+    }
+    const redis = globalThis[globalKey];
+    return {
+      name: "redis-url",
+      async get(key) {
+        const raw = await redis.get(key);
+        return raw ? JSON.parse(raw) : null;
+      },
+      async set(key, value, ttlSeconds) {
+        return redis.set(key, JSON.stringify(value), "EX", ttlSeconds);
+      },
+    };
+  }
+
+  // No cache configured
+  return {
+    name: "none",
+    async get() { return null; },
+    async set() { return; },
+  };
+}
+
 export async function getCachedConstellation(force = false) {
+  const cache = await getCacheAdapter();
+
   if (!force) {
     try {
-      const cached = await kv.get(CACHE_KEY);
+      const cached = await cache.get(CACHE_KEY);
       if (cached) {
-        return { source: "cache", data: cached };
+        return { source: `cache(${cache.name})`, data: cached };
       }
     } catch (e) {
-      console.warn("[constellation] KV get failed, falling back to fetch", e.message);
+      console.warn(`[constellation] cache get failed (${cache.name})`, e.message);
     }
   }
+
   const fresh = await fetchAndProcessData();
   try {
-    await kv.set(CACHE_KEY, fresh, { ex: CACHE_TTL_SECONDS });
+    await cache.set(CACHE_KEY, fresh, CACHE_TTL_SECONDS);
   } catch (e) {
-    console.warn("[constellation] KV set failed", e.message);
+    console.warn(`[constellation] cache set failed (${cache.name})`, e.message);
   }
-  return { source: force ? "force_refresh" : "live_fetch", data: fresh };
+  return { source: force ? `force_refresh(${cache.name})` : "live_fetch", data: fresh };
 }
 
 export async function refreshCache() {
