@@ -1,7 +1,8 @@
 import { useState, useEffect, lazy, Suspense, useMemo, useRef } from 'react';
-import { Loader2, ServerCrash, MapPin, Layers, Info, RefreshCw, Sparkles, Globe2, Database } from 'lucide-react';
+import { Loader2, ServerCrash, MapPin, Layers, Info, RefreshCw, Sparkles, Globe2, Database, InfoIcon } from 'lucide-react';
 const MapComponent = lazy(() => import('./MapComponent'));
 import AnalysisModal from './AnalysisModal';
+import About from './About';
 
 // --- Backend URL selection ---
 // Prefer environment override (e.g. VITE_BACKEND_URL="http://localhost:3000/api/constellation")
@@ -14,6 +15,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [dataSource, setDataSource] = useState('');
   const [showMap, setShowMap] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const mapSectionRef = useRef(null);
 
   // --- NEW MODAL STATE ---
@@ -98,6 +100,10 @@ export default function App() {
     return sum / balloons.length;
   }, [balloons]);
 
+  const toggleAbout = () => {
+    setShowAbout(!showAbout);
+  };
+
   const openMap = () => {
     setShowMap(true);
     setTimeout(() => {
@@ -124,6 +130,23 @@ export default function App() {
     </div>
   );
 
+  // If About page is shown, render it instead
+  if (showAbout) {
+    return (
+      <div className="min-h-screen w-full bg-gray-900">
+        <div className="p-4">
+          <button
+            onClick={toggleAbout}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg border border-white/20 transition-colors"
+          >
+            ← Back to Dashboard
+          </button>
+        </div>
+        <About />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full bg-gray-900 text-white p-4 md:p-8 flex flex-col items-center">
       <header className="w-full max-w-6xl text-center mb-10">
@@ -148,6 +171,13 @@ export default function App() {
           >
             <RefreshCw size={18} />
             Force Refresh
+          </button>
+          <button
+            onClick={toggleAbout}
+            className="inline-flex items-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg border border-white/20 transition-colors"
+          >
+            <InfoIcon size={18} />
+            About This Project
           </button>
         </div>
       </header>
